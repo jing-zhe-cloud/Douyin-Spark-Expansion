@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from collections import deque
 from pathlib import Path
 
@@ -15,6 +16,7 @@ LOG_DIR = DATA_DIR / "logs"
 
 _lock = threading.Lock()
 _ring: deque[str] = deque(maxlen=600)
+_activity: dict = {"msg": "", "at": ""}
 
 
 def _default() -> dict:
@@ -107,6 +109,17 @@ def update_runtime(**fields) -> None:
     rt = load_runtime()
     rt.update(fields)
     _save(rt)
+
+
+def set_activity(msg: str) -> None:
+    """更新当前正在执行的实时活动描述（内存态，供前端实时展示）。"""
+    _activity["msg"] = msg
+    _activity["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_activity() -> dict:
+    """返回当前实时活动描述。"""
+    return dict(_activity)
 
 
 class RingHandler(logging.Handler):

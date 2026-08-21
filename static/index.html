@@ -44,6 +44,22 @@
     .log-pre { background: #1f2430; color: #d4d7e0; padding: 14px; border-radius: 10px; height: 420px; overflow: auto; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
     .result-box { margin-top: 14px; }
     .spacer { flex: 1; }
+    .activity-bar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 14px; padding: 10px 16px;
+      background: #fff; border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(31, 45, 61, 0.05);
+      font-size: 13px; color: #606266;
+    }
+    .activity-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--brand); flex-shrink: 0;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.5); }
+    }
   </style>
 </head>
 <body>
@@ -60,6 +76,12 @@
         <div class="spacer"></div>
         <el-button size="small" @click="loadAll">刷新</el-button>
         <el-button size="small" @click="showTokenDialog">令牌</el-button>
+      </div>
+
+      <div v-if="status.activity && status.activity.msg" class="activity-bar">
+        <span class="activity-dot"></span>
+        <span>实时：{{ status.activity.msg }}</span>
+        <span style="color:#c0c4cc;">{{ status.activity.at }}</span>
       </div>
 
       <el-tabs v-model="tab">
@@ -304,7 +326,7 @@
         const token = ref(localStorage.getItem('ds_token') || '');
         const tokenInput = ref('');
         const tokenDialog = ref(false);
-        const status = reactive({ state_file_exists: false, session_status: 'unknown', running: false, last_run: null, next_run: null, history_count: 0, auth_required: true });
+        const status = reactive({ state_file_exists: false, session_status: 'unknown', running: false, activity: { msg: '', at: '' }, last_run: null, next_run: null, history_count: 0, auth_required: true });
         const config = reactive({ schedule_time: '21:00', jitter_minutes: 30, send_gap_min: 6, send_gap_max: 12, max_friends_per_run: 20, friends: [], messages: [] });
         const settingsForm = reactive({ schedule_time: '21:00', jitter_minutes: 30, send_gap_min: 6, send_gap_max: 12, max_friends_per_run: 20 });
         const autoReplyForm = reactive({ enabled: false, interval_minutes: 5, friendsText: '', fixed_enabled: false, fixed_text: '', fixed_start: '09:00', fixed_end: '18:00', keyword_enabled: false, rules: [] });
@@ -525,7 +547,7 @@
           logTimer = setInterval(() => {
             loadStatus();
             if (autoRefresh.value) loadLogs();
-          }, 20000);
+          }, 3000);
         });
         onUnmounted(() => { if (logTimer) clearInterval(logTimer); });
 

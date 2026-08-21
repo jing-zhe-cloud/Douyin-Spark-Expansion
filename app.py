@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from core import automation, scheduler
 from core.config import DATA_DIR, load_config, save_config
 from core.runtime import (
+    get_activity,
     load_runtime,
     recent_logs,
     record_auto_reply,
@@ -183,6 +184,7 @@ def api_status(token: str = Header(default="", alias="X-Auth-Token")) -> dict:
         "state_file_exists": STATE_PATH.exists(),
         "session_status": rt.get("session_status", "unknown"),
         "running": rt.get("running", False),
+        "activity": get_activity(),
         "last_run": rt.get("last_run"),
         "last_auto_reply": rt.get("last_auto_reply"),
         "next_run": scheduler.next_run_time(),

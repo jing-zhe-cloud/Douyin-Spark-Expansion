@@ -17,13 +17,29 @@ from datetime import datetime
 from playwright.sync_api import sync_playwright
 
 from .config import DATA_DIR, load_config
-from .runtime import load_replied_keys, record_replied
+from .runtime import load_replied_keys, record_replied, set_activity
 
 logger = logging.getLogger("douyin-spark")
 
 STATE_PATH = DATA_DIR / "state.json"
 SCREENSHOT_PATH = DATA_DIR / "last_error.png"
 CHAT_URL = "https://www.douyin.com/chat"
+
+# 无头浏览器启动参数：附加反自动化检测，降低被抖音识别并断开连接的概率
+BROWSER_ARGS = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+    "--window-size=1366,768",
+]
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 RATE_LIMIT_KEYWORDS = [
     "操作频繁",
@@ -53,6 +69,38 @@ def _screenshot(page) -> None:
         logger.info("已保存页面截图: %s", SCREENSHOT_PATH)
     except Exception:
         pass
+
+
+def _launch_browser(p):
+    """启动无头浏览器（带反自动化检测参数），并更新实时状态。"""
+    set_activity("正在启动浏览器")
+    return p.chromium.launch(headless=True, args=BROWSER_ARGS)
+
+
+def _new_context(browser):
+    """创建带登录态和真实 UA 的浏览器上下文。"""
+    set_activity("正在加载登录态")
+    return browser.new_context(
+        storage_state=str(STATE_PATH),
+        viewport={"width": 1366, "height": 768},
+        user_agent=USER_AGENT,
+    )
+
+
+def _goto_chat(page, label: str) -> bool:
+    """打开抖音私信页，带重试与实时状态更新。"""
+    for attempt in range(3):
+        set_activity(f"{label}：正在打开抖音私信页（第 {attempt + 1} 次）")
+        try:
+            page.goto(CHAT_URL, timeout=90000, wait_until="domcontentloaded")
+            set_activity(f"{label}：打开抖音成功")
+            return True
+        except Exception as e:
+            logger.info("%s 第 %s 次打开页面失败: %s", label, attempt + 1, str(e)[:80])
+            set_activity(f"{label}：打开页面失败，等待重试")
+            time.sleep(5)
+    set_activity(f"{label}：打开抖音失败")
+    return False
 
 
 def check_login(page) -> tuple[bool, str]:
@@ -262,31 +310,11 @@ def fetch_chat_contacts() -> dict:
     try:
         p = sync_playwright().start()
         try:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                ],
-            )
-            context = browser.new_context(
-                storage_state=str(STATE_PATH),
-                viewport={"width": 1366, "height": 768},
-            )
+            browser = _launch_browser(p)
+            context = _new_context(browser)
             page = context.new_page()
 
-            goto_ok = False
-            for attempt in range(3):
-                try:
-                    page.goto(CHAT_URL, timeout=90000, wait_until="domcontentloaded")
-                    goto_ok = True
-                    break
-                except Exception as e:
-                    logger.info("获取联系人时第 %s 次打开页面失败: %s", attempt + 1, str(e)[:80])
-                    time.sleep(5)
-            if not goto_ok:
+            if not _goto_chat(page, "获取联系人"):
                 result["error"] = "无法打开抖音私信页面"
                 return result
 
@@ -313,6 +341,7 @@ def fetch_chat_contacts() -> dict:
             """
 
             collected: list[dict] = []
+            set_activity("正在读取聊天列表")
             for attempt in range(3):
                 try:
                     page.wait_for_selector(".conversationConversationItemtitle", timeout=45000)
@@ -388,31 +417,11 @@ def run_send(dry_run: bool = False, only_names: list[str] | None = None) -> dict
     try:
         p = sync_playwright().start()
         try:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                ],
-            )
-            context = browser.new_context(
-                storage_state=str(STATE_PATH),
-                viewport={"width": 1366, "height": 768},
-            )
+            browser = _launch_browser(p)
+            context = _new_context(browser)
             page = context.new_page()
 
-            goto_ok = False
-            for attempt in range(3):
-                try:
-                    page.goto(CHAT_URL, timeout=60000, wait_until="domcontentloaded")
-                    goto_ok = True
-                    break
-                except Exception as e:
-                    logger.info("第 %s 次打开页面失败: %s", attempt + 1, str(e)[:80])
-                    time.sleep(5)
-            if not goto_ok:
+            if not _goto_chat(page, "续火花发送"):
                 result["failed"].append({"name": "_system", "reason": "无法打开抖音私信页面"})
                 return result
 
@@ -430,6 +439,7 @@ def run_send(dry_run: bool = False, only_names: list[str] | None = None) -> dict
 
             logger.info("待发送好友 %s 人，dry_run=%s", len(targets), dry_run)
             for name in targets:
+                set_activity(f"续火花：正在发送给 {name}")
                 msg = random.choice(messages)
                 ok, why = send_to_contact(page, name, msg, dry_run)
                 if ok:
@@ -562,31 +572,11 @@ def check_and_reply(dry_run: bool = False) -> dict:
     try:
         p = sync_playwright().start()
         try:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                ],
-            )
-            context = browser.new_context(
-                storage_state=str(STATE_PATH),
-                viewport={"width": 1366, "height": 768},
-            )
+            browser = _launch_browser(p)
+            context = _new_context(browser)
             page = context.new_page()
 
-            goto_ok = False
-            for attempt in range(3):
-                try:
-                    page.goto(CHAT_URL, timeout=60000, wait_until="domcontentloaded")
-                    goto_ok = True
-                    break
-                except Exception as e:
-                    logger.info("自动回复第 %s 次打开页面失败: %s", attempt + 1, str(e)[:80])
-                    time.sleep(5)
-            if not goto_ok:
+            if not _goto_chat(page, "自动回复"):
                 return result
 
             time.sleep(8)
@@ -598,6 +588,7 @@ def check_and_reply(dry_run: bool = False) -> dict:
 
             for name in friends:
                 result["checked"] += 1
+                set_activity(f"自动回复：正在检查 {name}")
                 if detect_rate_limit(page):
                     result["rate_limited"] = True
                     logger.warning("自动回复：检测到限流，停止本轮")
