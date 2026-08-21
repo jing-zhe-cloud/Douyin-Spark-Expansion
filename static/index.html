@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>抖音续火花助手</title>
+  <link rel="stylesheet" href="/static/vendor/element-plus.css" />
+  <style>
+    :root {
+      --brand: #fe2c55;
+      --brand-light: #ff5c7a;
+      --text-main: #1f2d3d;
+      --text-sub: #909399;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(160deg, #f7f8fc 0%, #eef0f5 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: var(--text-main);
+    }
+    .page { max-width: 1080px; margin: 0 auto; padding: 20px; }
+    .header {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 18px; padding: 16px 20px;
+      background: #fff; border-radius: 14px;
+      box-shadow: 0 4px 16px rgba(31, 45, 61, 0.06);
+    }
+    .header h1 { font-size: 22px; margin: 0 8px 0 0; font-weight: 700; color: var(--brand); }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .cards .el-card {
+      --el-card-padding: 16px;
+      border: none; border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(31, 45, 61, 0.05);
+      transition: transform .2s ease, box-shadow .2s ease;
+    }
+    .cards .el-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(31, 45, 61, 0.10); }
+    .card-label { color: var(--text-sub); font-size: 12px; margin-bottom: 8px; }
+    .card-value { font-size: 20px; font-weight: 700; color: var(--text-main); }
+    .el-tabs__item { font-size: 15px; font-weight: 500; }
+    .el-tabs__item.is-active { color: var(--brand); }
+    .el-tabs__active-bar { background-color: var(--brand); }
+    .el-card { border: none; border-radius: 12px; box-shadow: 0 2px 10px rgba(31, 45, 61, 0.05); }
+    .log-pre { background: #1f2430; color: #d4d7e0; padding: 14px; border-radius: 10px; height: 420px; overflow: auto; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
+    .result-box { margin-top: 14px; }
+    .spacer { flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="page">
+      <div class="header">
+        <h1>🔥 抖音续火花助手</h1>
+        <el-tag v-if="status.session_status === 'ok'" type="success">登录正常</el-tag>
+        <el-tag v-else-if="status.session_status === 'expired'" type="danger">登录态已过期</el-tag>
+        <el-tag v-else-if="status.session_status === 'partial'" type="warning">部分发送成功</el-tag>
+        <el-tag v-else-if="status.session_status === 'failed'" type="danger">发送失败</el-tag>
+        <el-tag v-else type="info">状态未知</el-tag>
+        <el-tag v-if="status.running" type="warning">运行中…</el-tag>
+        <div class="spacer"></div>
+        <el-button size="small" @click="loadAll">刷新</el-button>
+        <el-button size="small" @click="showTokenDialog">令牌</el-button>
+      </div>
+
+      <el-tabs v-model="tab">
+        <el-tab-pane label="概览" name="overview">
+          <div class="cards">
+            <el-card shadow="never">
+              <div class="card-label">登录态文件</div>
+              <div class="card-value">{{ status.state_file_exists ? '已上传' : '未上传' }}</div>
+            </el-card>
+            <el-card shadow="never">
+              <div class="card-label">运行状态</div>
+              <div class="card-value">{{ status.running ? '运行中' : '空闲' }}</div>
+            </el-card>
+            <el-card shadow="never">
+              <div class="card-label">下次自动发送</div>
+              <div class="card-value">{{ fmt(status.next_run) || '未设置' }}</div>
+            </el-card>
+            <el-card shadow="never">
+              <div class="card-label">历史执行次数</div>
+              <div class="card-value">{{ status.history_count }}</div>
+            </el-card>
+          </div>
+
+          <el-card shadow="never">
+            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+              <el-button type="primary" :loading="status.running" @click="triggerRun(false)">立即发送</el-button>
+              <el-button :loading="status.running" @click="triggerRun(true)">干跑测试（不真实发送）</el-button>
+              <el-upload
+                :auto-upload="false"
+                :limit="1"
+                accept=".json"
+                :on-change="onFileChange"
+                :on-remove="onFileRemove"
+                style="display:inline-block;">
+                <el-button>选择 state.json</el-button>
+              </el-upload>
+              <el-button type="success" :disabled="!uploadFile" @click="uploadState">上传登录态</el-button>
+            </div>
+            <div class="result-box" v-if="status.last_run">
+              <el-divider content-position="left">上次执行（{{ fmt(status.last_run.at) }}<template v-if="status.last_run.dry_run">，干跑</template>）</el-divider>
+              <div style="margin-bottom:6px;">
+                <span style="color:#67c23a;">成功 {{ status.last_run.ok.length }} 人：</span>
+                <el-tag v-for="n in status.last_run.ok" :key="n" size="small" type="success" style="margin:2px;">{{ n }}</el-tag>
+              </div>
+              <div>
+                <span style="color:#f56c6c;">失败 {{ status.last_run.failed.length }} 人：</span>
+                <el-tooltip v-for="f in status.last_run.failed" :key="f.name" :content="f.reason" placement="top">
+                  <el-tag size="small" type="danger" style="margin:2px;">{{ f.name }}</el-tag>
+                </el-tooltip>
+              </div>
+              <el-alert v-if="status.last_run.logged_out" type="error" :closable="false" style="margin-top:8px;"
+                title="登录态已过期：请在电脑上重新运行 extract_cookie.py 并重新上传登录态"></el-alert>
+              <el-alert v-else-if="status.last_run.rate_limited" type="warning" :closable="false" style="margin-top:8px;"
+                title="疑似触发抖音限流：本轮已停止，下次定时任务会自动补发"></el-alert>
+            </div>
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane label="好友与消息" name="friends">
+          <el-card shadow="never">
+            <div style="margin-bottom:14px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+              <el-button type="primary" :loading="contactsFetching" @click="fetchContacts">获取聊天列表</el-button>
+              <span style="color:#909399; font-size:12px;">
+                <template v-if="contacts.length">共 {{ contacts.length }} 个聊天对象，最后更新 {{ fmt(contactsAt) }}</template>
+                <template v-else-if="contactsError">获取失败：{{ contactsError }}</template>
+                <template v-else>点击按钮从抖音聊天列表读取好友，勾选即可，免手动输入</template>
+              </span>
+            </div>
+            <div v-if="contacts.length" style="margin-bottom:16px; max-height:260px; overflow:auto; border:1px solid #ebeef5; border-radius:6px; padding:10px 14px;">
+              <el-checkbox-group v-model="selectedFriends">
+                <el-checkbox v-for="c in contacts" :key="c.name" :label="c.name" style="margin:4px 20px 4px 0;">
+                  {{ c.name }}<el-tag v-if="c.streak" size="small" type="warning" style="margin-left:6px;">🔥 {{ c.streak }}</el-tag>
+                </el-checkbox>
+              </el-checkbox-group>
+            </div>
+            <el-form label-width="110px">
+              <el-form-item label="续火花好友">
+                <el-input v-model="friendsText" type="textarea" :rows="5"
+                  placeholder="已选好友名单（每行一个）；也可手动补充聊天列表里显示的备注 / 昵称 / 抖音号"></el-input>
+              </el-form-item>
+              <el-form-item label="消息模板">
+                <el-input v-model="messagesText" type="textarea" :rows="5"
+                  placeholder="每行一条，每次随机选择一条发送"></el-input>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="saveFriends">保存</el-button>
+                <el-button @click="applySelection">把勾选结果写入名单</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane label="定时设置" name="settings">
+          <el-card shadow="never">
+            <el-form label-width="150px">
+              <el-form-item label="每天发送时间">
+                <el-input v-model="settingsForm.schedule_time" type="time" style="width:160px;"></el-input>
+              </el-form-item>
+              <el-form-item label="时间抖动窗口（分钟）">
+                <el-input-number v-model="settingsForm.jitter_minutes" :min="0" :max="240"></el-input-number>
+                <span style="margin-left:8px;color:#909399;font-size:12px;">在设定时间后 0～N 分钟内随机开始，避免每天同一秒发送</span>
+              </el-form-item>
+              <el-form-item label="好友间隔（秒）">
+                <el-input-number v-model="settingsForm.send_gap_min" :min="1" :max="300"></el-input-number>
+                <span style="margin:0 6px;">至</span>
+                <el-input-number v-model="settingsForm.send_gap_max" :min="1" :max="300"></el-input-number>
+              </el-form-item>
+              <el-form-item label="每次最多发送人数">
+                <el-input-number v-model="settingsForm.max_friends_per_run" :min="0" :max="200"></el-input-number>
+                <span style="margin-left:8px;color:#909399;font-size:12px;">0 表示不限制</span>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="saveSettings">保存</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane label="自动回复" name="autoreply">
+          <el-card shadow="never">
+            <el-form label-width="150px">
+              <el-form-item label="启用自动回复">
+                <el-switch v-model="autoReplyForm.enabled"></el-switch>
+                <span style="margin-left:10px;color:#909399;font-size:12px;">总开关，开启后按固定间隔轮询检查新私信</span>
+              </el-form-item>
+              <el-form-item label="轮询间隔（分钟）">
+                <el-input-number v-model="autoReplyForm.interval_minutes" :min="1" :max="1440"></el-input-number>
+                <span style="margin-left:10px;color:#909399;font-size:12px;">下次自动检查：{{ fmt(status.next_auto_reply) || '未启用' }}</span>
+              </el-form-item>
+            </el-form>
+          </el-card>
+
+          <el-card shadow="never" style="margin-top:12px;">
+            <div style="margin-bottom:14px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+              <el-button type="primary" :loading="contactsFetching" @click="fetchContacts">获取聊天列表</el-button>
+              <span style="color:#909399; font-size:12px;">
+                <template v-if="contacts.length">共 {{ contacts.length }} 个聊天对象，勾选后写入下方名单</template>
+                <template v-else-if="contactsError">获取失败：{{ contactsError }}</template>
+                <template v-else>点击按钮读取聊天列表，勾选要自动回复的好友</template>
+              </span>
+            </div>
+            <div v-if="contacts.length" style="margin-bottom:16px; max-height:240px; overflow:auto; border:1px solid #ebeef5; border-radius:6px; padding:10px 14px;">
+              <el-checkbox-group v-model="autoReplySelectedFriends">
+                <el-checkbox v-for="c in contacts" :key="c.name" :label="c.name" style="margin:4px 20px 4px 0;">
+                  {{ c.name }}<el-tag v-if="c.streak" size="small" type="warning" style="margin-left:6px;">🔥 {{ c.streak }}</el-tag>
+                </el-checkbox>
+              </el-checkbox-group>
+            </div>
+            <el-form label-width="150px">
+              <el-form-item label="好友名单">
+                <el-input v-model="autoReplyForm.friendsText" type="textarea" :rows="4"
+                  placeholder="自动回复的好友名单（每行一个），独立于「好友与消息」的续火花名单"></el-input>
+              </el-form-item>
+              <el-form-item>
+                <el-button @click="applyAutoReplySelection">把勾选结果写入名单</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
+
+          <el-card shadow="never" style="margin-top:12px;">
+            <el-form label-width="150px">
+              <el-form-item label="固定回复">
+                <el-switch v-model="autoReplyForm.fixed_enabled"></el-switch>
+                <span style="margin-left:10px;color:#909399;font-size:12px;">好友发任何消息，统一回复下面这句话</span>
+              </el-form-item>
+              <el-form-item label="固定回复文案">
+                <el-input v-model="autoReplyForm.fixed_text" placeholder="例如：在忙，稍后回复你"></el-input>
+              </el-form-item>
+              <el-form-item label="生效时间段">
+                <el-input v-model="autoReplyForm.fixed_start" type="time" style="width:150px;"></el-input>
+                <span style="margin:0 8px;">至</span>
+                <el-input v-model="autoReplyForm.fixed_end" type="time" style="width:150px;"></el-input>
+                <span style="margin-left:8px;color:#909399;font-size:12px;">仅该时段内固定回复生效，支持跨天（如 22:00 至 08:00）</span>
+              </el-form-item>
+              <el-form-item label="关键词规则">
+                <el-switch v-model="autoReplyForm.keyword_enabled"></el-switch>
+                <span style="margin-left:10px;color:#909399;font-size:12px;">命中关键词用对应文案（优先于固定回复）</span>
+              </el-form-item>
+              <el-form-item label="规则表">
+                <div style="width:100%;">
+                  <div v-for="(r, idx) in autoReplyForm.rules" :key="idx" style="display:flex; gap:8px; margin-bottom:6px; align-items:center;">
+                    <el-input v-model="r.keyword" placeholder="好友发的关键词" style="width:220px;"></el-input>
+                    <el-input v-model="r.reply" placeholder="你指定的回复" style="width:260px;"></el-input>
+                    <el-button size="small" @click="autoReplyForm.rules.splice(idx, 1)">删除</el-button>
+                  </div>
+                  <el-button size="small" @click="autoReplyForm.rules.push({keyword:'', reply:''})">+ 添加规则</el-button>
+                </div>
+              </el-form-item>
+            </el-form>
+          </el-card>
+
+          <el-card shadow="never" style="margin-top:12px;">
+            <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+              <el-button type="primary" @click="saveAutoReply">保存</el-button>
+              <el-button :loading="status.running" @click="triggerAutoReplyCheck(false)">立即检查</el-button>
+              <el-button :loading="status.running" @click="triggerAutoReplyCheck(true)">干跑测试（不真实回复）</el-button>
+            </div>
+            <div class="result-box" v-if="status.last_auto_reply">
+              <el-divider content-position="left">上次自动回复检查（{{ fmt(status.last_auto_reply.at) }}<template v-if="status.last_auto_reply.dry_run">，干跑</template>）</el-divider>
+              <div>检查 {{ status.last_auto_reply.checked }} 人，回复 {{ status.last_auto_reply.replied.length }} 人，跳过 {{ status.last_auto_reply.skipped }} 人<template v-if="status.last_auto_reply.deduped">，已回复过 {{ status.last_auto_reply.deduped }} 条（去重）</template></div>
+              <div v-if="status.last_auto_reply.replied.length" style="margin-top:6px;">
+                <el-tag v-for="r in status.last_auto_reply.replied" :key="r.name" size="small" :type="r.type === 'fixed' ? 'success' : 'warning'" style="margin:2px;">
+                  {{ r.name }}（{{ r.type === 'fixed' ? '固定' : '关键词' }}）→ {{ r.text }}
+                </el-tag>
+              </div>
+              <el-alert v-if="status.last_auto_reply.logged_out" type="error" :closable="false" style="margin-top:8px;" title="登录态已过期"></el-alert>
+              <el-alert v-else-if="status.last_auto_reply.rate_limited" type="warning" :closable="false" style="margin-top:8px;" title="疑似触发限流，本轮已停止"></el-alert>
+            </div>
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane label="日志" name="logs">
+          <el-card shadow="never">
+            <div style="display:flex; gap:8px; margin-bottom:10px;">
+              <el-button size="small" @click="loadLogs">刷新日志</el-button>
+              <el-checkbox v-model="autoRefresh">自动刷新</el-checkbox>
+            </div>
+            <pre class="log-pre">{{ logs || '暂无日志' }}</pre>
+          </el-card>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+
+    <el-dialog v-model="tokenDialog" title="访问令牌" width="360px" :close-on-click-modal="false" :show-close="false">
+      <p style="margin-top:0;color:#606266;font-size:13px;">请输入部署时生成的访问令牌（保存在服务器 .env 文件中）。</p>
+      <el-input v-model="tokenInput" placeholder="访问令牌" show-password @keyup.enter="saveToken"></el-input>
+      <template #footer>
+        <el-button type="primary" @click="saveToken">确定</el-button>
+      </template>
+    </el-dialog>
+  </div>
+
+  <script src="/static/vendor/vue.global.prod.js"></script>
+  <script src="/static/vendor/element-plus.full.min.js"></script>
+  <script src="/static/vendor/axios.min.js"></script>
+  <script>
+    const { createApp, ref, reactive, onMounted, onUnmounted, nextTick } = Vue;
+
+    const app = createApp({
+      setup() {
+        const tab = ref('overview');
+        const token = ref(localStorage.getItem('ds_token') || '');
+        const tokenInput = ref('');
+        const tokenDialog = ref(false);
+        const status = reactive({ state_file_exists: false, session_status: 'unknown', running: false, last_run: null, next_run: null, history_count: 0, auth_required: true });
+        const config = reactive({ schedule_time: '21:00', jitter_minutes: 30, send_gap_min: 6, send_gap_max: 12, max_friends_per_run: 20, friends: [], messages: [] });
+        const settingsForm = reactive({ schedule_time: '21:00', jitter_minutes: 30, send_gap_min: 6, send_gap_max: 12, max_friends_per_run: 20 });
+        const autoReplyForm = reactive({ enabled: false, interval_minutes: 5, friendsText: '', fixed_enabled: false, fixed_text: '', fixed_start: '09:00', fixed_end: '18:00', keyword_enabled: false, rules: [] });
+        const autoReplySelectedFriends = ref([]);
+        const friendsText = ref('');
+        const messagesText = ref('');
+        const logs = ref('');
+        const autoRefresh = ref(false);
+        const uploadFile = ref(null);
+        const contacts = ref([]);
+        const contactsAt = ref('');
+        const contactsError = ref('');
+        const contactsFetching = ref(false);
+        const selectedFriends = ref([]);
+        let logTimer = null;
+
+        const api = axios.create({ baseURL: '/api', timeout: 900000 });
+        api.interceptors.request.use((cfg) => {
+          if (token.value) cfg.headers['X-Auth-Token'] = token.value;
+          return cfg;
+        });
+        api.interceptors.response.use(
+          (r) => r,
+          (err) => {
+            if (err.response && err.response.status === 401) { tokenDialog.value = true; }
+            return Promise.reject(err);
+          }
+        );
+
+        function showTokenDialog() { tokenInput.value = token.value; tokenDialog.value = true; }
+        function saveToken() {
+          token.value = tokenInput.value.trim();
+          localStorage.setItem('ds_token', token.value);
+          tokenDialog.value = false;
+          loadAll();
+        }
+
+        function fmt(iso) {
+          if (!iso) return '';
+          const d = new Date(iso);
+          return isNaN(d) ? iso : d.toLocaleString('zh-CN', { hour12: false });
+        }
+
+        async function loadStatus() {
+          try {
+            const r = await api.get('/status');
+            Object.assign(status, r.data);
+            if (r.data.auth_required && !token.value) tokenDialog.value = true;
+          } catch (e) { /* 401 handled by interceptor */ }
+        }
+        async function loadConfig() {
+          try {
+            const r = await api.get('/config');
+            Object.assign(config, r.data);
+            Object.assign(settingsForm, r.data);
+            friendsText.value = (r.data.friends || []).join('\n');
+            messagesText.value = (r.data.messages || []).join('\n');
+            selectedFriends.value = (r.data.friends || []).slice();
+            autoReplyForm.enabled = !!r.data.auto_reply_enabled;
+            autoReplyForm.interval_minutes = r.data.auto_reply_interval_minutes || 5;
+            autoReplyForm.friendsText = (r.data.auto_reply_friends || []).join('\n');
+            autoReplyForm.fixed_enabled = !!r.data.auto_reply_fixed_enabled;
+            autoReplyForm.fixed_text = r.data.auto_reply_fixed_text || '';
+            autoReplyForm.fixed_start = r.data.auto_reply_fixed_start || '09:00';
+            autoReplyForm.fixed_end = r.data.auto_reply_fixed_end || '18:00';
+            autoReplyForm.keyword_enabled = !!r.data.auto_reply_keyword_enabled;
+            autoReplyForm.rules = (r.data.auto_reply_rules || []).map((x) => ({ keyword: x.keyword || '', reply: x.reply || '' }));
+            autoReplySelectedFriends.value = (r.data.auto_reply_friends || []).slice();
+          } catch (e) { /* handled */ }
+        }
+        async function loadContacts() {
+          try {
+            const r = await api.get('/contacts');
+            contacts.value = r.data.contacts || [];
+            contactsAt.value = r.data.contacts_at || '';
+            contactsError.value = r.data.contacts_error || '';
+            contactsFetching.value = !!r.data.fetching;
+          } catch (e) { /* handled */ }
+        }
+        async function fetchContacts() {
+          try {
+            await api.post('/contacts/fetch');
+            contactsFetching.value = true;
+            ElementPlus.ElMessage.info('正在读取聊天列表，可能需要半分钟左右…');
+            for (let i = 0; i < 80; i++) {
+              await new Promise((r) => setTimeout(r, 3000));
+              await loadContacts();
+              if (!contactsFetching.value) break;
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.response?.data?.detail || '获取失败');
+          }
+        }
+        function applySelection() {
+          friendsText.value = selectedFriends.value.join('\n');
+          ElementPlus.ElMessage.success('已把勾选结果写入名单，记得点「保存」');
+        }
+        async function loadLogs() {
+          try {
+            const r = await api.get('/logs');
+            logs.value = r.data.logs;
+          } catch (e) { /* handled */ }
+        }
+        async function loadAll() {
+          await loadStatus();
+          await loadConfig();
+          await loadContacts();
+          await loadLogs();
+        }
+
+        function buildConfigPayload(extra) {
+          return { config: Object.assign({}, config, settingsForm, {
+            friends: friendsText.value.split('\n').map((s) => s.trim()).filter(Boolean),
+            messages: messagesText.value.split('\n').map((s) => s.trim()).filter(Boolean),
+          }, extra || {}) };
+        }
+        async function saveFriends() {
+          try {
+            await api.put('/config', buildConfigPayload());
+            await loadConfig();
+            ElementPlus.ElMessage.success('好友与消息已保存');
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.response?.data?.detail || '保存失败');
+          }
+        }
+        async function saveSettings() {
+          try {
+            await api.put('/config', buildConfigPayload({ schedule_time: settingsForm.schedule_time }));
+            await loadConfig();
+            await loadStatus();
+            ElementPlus.ElMessage.success('定时设置已保存');
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.response?.data?.detail || '保存失败');
+          }
+        }
+        function applyAutoReplySelection() {
+          autoReplyForm.friendsText = autoReplySelectedFriends.value.join('\n');
+          ElementPlus.ElMessage.success('已把勾选结果写入名单，记得点「保存」');
+        }
+        async function saveAutoReply() {
+          try {
+            const rules = autoReplyForm.rules
+              .map((x) => ({ keyword: (x.keyword || '').trim(), reply: (x.reply || '').trim() }))
+              .filter((x) => x.keyword && x.reply);
+            await api.put('/config', buildConfigPayload({
+              auto_reply_enabled: autoReplyForm.enabled,
+              auto_reply_interval_minutes: autoReplyForm.interval_minutes,
+              auto_reply_friends: autoReplyForm.friendsText.split('\n').map((s) => s.trim()).filter(Boolean),
+              auto_reply_fixed_enabled: autoReplyForm.fixed_enabled,
+              auto_reply_fixed_text: autoReplyForm.fixed_text,
+              auto_reply_fixed_start: autoReplyForm.fixed_start,
+              auto_reply_fixed_end: autoReplyForm.fixed_end,
+              auto_reply_keyword_enabled: autoReplyForm.keyword_enabled,
+              auto_reply_rules: rules,
+            }));
+            await loadConfig();
+            await loadStatus();
+            ElementPlus.ElMessage.success('自动回复设置已保存');
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.response?.data?.detail || '保存失败');
+          }
+        }
+        async function triggerAutoReplyCheck(dry) {
+          try {
+            const r = await api.post('/auto-reply/check', { dry });
+            if (r.data.started) {
+              ElementPlus.ElMessage.info(dry ? '自动回复干跑测试已启动' : '自动回复检查已启动');
+              await loadStatus();
+              await waitForRunFinish(1200);
+              await loadLogs();
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.response?.data?.detail || '启动失败');
+          }
+        }
+
+        async function waitForRunFinish(maxSeconds) {
+          const start = Date.now();
+          while (Date.now() - start < maxSeconds * 1000) {
+            await new Promise((r) => setTimeout(r, 5000));
+            await loadStatus();
+            if (!status.running) return;
+          }
+          ElementPlus.ElMessage.warning('等待超时，任务可能仍在后台运行');
+        }
+        async function triggerRun(dry) {
+          try {
+            const r = await api.post('/run', { dry });
+            if (r.data.started) {
+              ElementPlus.ElMessage.info(dry ? '干跑测试已启动' : '发送任务已启动');
+              await loadStatus();
+              await waitForRunFinish(1200);
+              await loadLogs();
+            }
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.response?.data?.detail || '启动失败');
+          }
+        }
+
+        function onFileChange(file) { uploadFile.value = file.raw || null; }
+        function onFileRemove() { uploadFile.value = null; }
+        async function uploadState() {
+          if (!uploadFile.value) return;
+          try {
+            const fd = new FormData();
+            fd.append('file', uploadFile.value);
+            const r = await api.post('/upload-state', fd);
+            ElementPlus.ElMessage.success('登录态已上传（' + r.data.size + ' 字节）');
+            uploadFile.value = null;
+            await loadStatus();
+          } catch (e) {
+            ElementPlus.ElMessage.error(e.response?.data?.detail || '上传失败');
+          }
+        }
+
+        onMounted(async () => {
+          await loadAll();
+          logTimer = setInterval(() => {
+            loadStatus();
+            if (autoRefresh.value) loadLogs();
+          }, 20000);
+        });
+        onUnmounted(() => { if (logTimer) clearInterval(logTimer); });
+
+        return {
+          tab, status, settingsForm, autoReplyForm, friendsText, messagesText, logs, autoRefresh, uploadFile,
+          contacts, contactsAt, contactsError, contactsFetching, selectedFriends, autoReplySelectedFriends,
+          tokenDialog, tokenInput,
+          fmt, loadAll, loadLogs, loadContacts, fetchContacts, applySelection, applyAutoReplySelection,
+          saveFriends, saveSettings, saveAutoReply, triggerRun, triggerAutoReplyCheck,
+          onFileChange, onFileRemove, uploadState, showTokenDialog, saveToken,
+        };
+      },
+    });
+
+    app.use(ElementPlus);
+    app.mount('#app');
+  </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[Unit]
+Description=Douyin Spark Keeper (auto streak)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+ExecStart=__VENV__/bin/python app.py
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

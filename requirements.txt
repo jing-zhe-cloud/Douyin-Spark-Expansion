@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+playwright>=1.45
+APScheduler>=3.10
+python-multipart>=0.0.9
+pydantic>=2.6
